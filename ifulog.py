@@ -3,7 +3,7 @@
 I Fink U Logging (ifulog for short) is a simple and flexible
 live log analyzer
 
-Copyright (C) 2013 Pablo Martin <pablo at odkq.com>
+Copyright (C) 2013 Pablo Martin <pablo.martin@acm.org>
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -24,9 +24,9 @@ import time
 import shlex
 import curses
 import optparse
+import datetime
 
 IFULOG_VERSION = "0.1.0"
-
 
 class CrazyParser:
     ''' Crazy LR parser over the crazy lexer shlex '''
@@ -101,6 +101,7 @@ profile_parser_rules = {
         'nfields': {'argc': 1},
         'field': {'argc': 2}},
     'key': {'argc': 2},
+    'dateformat': {'argc': 1},
     'show': {
         'first': {'argc': 3},
         'sub': {'argc': 3},
@@ -109,6 +110,7 @@ profile_parser_rules = {
 
 class Display:
     def __init__(self, stdscr, config):
+        self.width = 25
         self.s = stdscr
         self.config = config
         self.attrib_to_number = {'first': 1, 'sub': 2, 'subsub': 3}
@@ -134,7 +136,9 @@ class Display:
             title += ' from '
             title += str(len(stats['filter']))
         self.my, self.mx = self.s.getmaxyx()
-        status = ' ' + time.asctime() + ' '
+        status = ' '
+        if stats['count'] > 0:
+            status = ' ' + stats['date'].strftime('%Y-%m-%d %H:%M:%S') + ' '
         self.s.addstr(self.y, 0, title + (' ' * (self.mx - len(title))),
             self.attrib_title)
         self.y = 2
@@ -149,20 +153,25 @@ class Display:
         for k in stats['first']:
             s = k.ljust(12, ' ') + ' ' + \
                 str(stats['first'][k]['count']).rjust(7, ' ')
-            s = k + ' ' + str(stats['first'][k]['count'])
+            # s = k + ' ' + str(stats['first'][k]['count'])
+            #    v['count'].rjust(7, ' ')
             self.putline(2, s, 'first')
+            if 'sub' in stats['first'][k]:
+            #    mark
+                for k in stats['first'][k]['sub']:
+                    s = k.ljust(12, ' ') + ' ' + \
+                            str(stats['first'][k]['count']).rjust(7, ' ')
         for x in range(self.mx):
             self.s.addch(self.my - 2, x, curses.ACS_HLINE)
 
     def putline(self, indent, string, attrib):
-        width = 25
-        self.s.addstr(self.y, self.x, ' ' * width)
+        self.s.addstr(self.y, self.x, ' ' * self.width)
         self.s.addch(self.y, self.x, curses.ACS_VLINE)
         a = curses.color_pair(self.attrib_to_number[attrib])
         self.s.addstr(self.y, self.x + indent, string, a)
         self.y += 1
         if self.y >= (self.my - 3):
-            self.x += width
+            self.x += self.width
             self.y = 2
 
 
@@ -172,16 +181,23 @@ class Stats:
         self.data = {'keys': {}, 'count': 0, 'processed': 0, 'filter': None,
             'first': {}}
         self.delimiter = self.profile['delimiter'][0]
-        self.keyfield = int(self.profile['key'][1])
+
+        self.keyeval = self.profile['key'][1]
+        # ['first', 'sub', 'subsub']
         self.first_op = self.profile['show']['first'][0]
-        self.first_field = int(self.profile['show']['first'][1])
+        self.firsteval = self.profile['show']['first'][1]
         self.first_name = self.profile['show']['first'][2]
 
     def process(self, line):
         ls = line.split(self.delimiter)
         try:
-            key = ls[self.keyfield]
-            first_value = ls[int(self.first_field)]
+            key = eval(self.keyeval)
+            first_value = eval(self.firsteval)
+            date = eval(self.profile['dateformat'][0])
+            self.data['date'] = date
+            # Store start_date with the first line for the stats set
+            if self.data['count'] == '0':
+                self.startdate = date
             if self.insert_update(self.data['keys'], self.data['first'],
                                     self.first_op, key, first_value):
                 self.data['count'] += 1
@@ -192,9 +208,13 @@ class Stats:
                     # and threshold
                     self.update_result(self.data['first'], key,
                                   distinct)
+            # Check for the end of the set (increment from start_date is
+            # met)
+            # XXX
         except IndexError:
             return
         self.data['processed'] += 1
+
 
     def add_result(self, r, first_value):
         # Only used in group aggregation, to either store
@@ -260,7 +280,7 @@ def curses_main(stdscr, config, profile):
             break
         line = line[:-1]
         stats.process(line)
-
+    time.sleep(100)
 
 if __name__ == '__main__':
     usage = 'Usage: ifulog.py [options] PROFILE'
