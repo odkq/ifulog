@@ -100,6 +100,7 @@ profile_parser_rules = {
         'ocurrences': '*',      # Setup as an array of repetitions
         'nfields': {'argc': 1},
         'field': {'argc': 2}},
+    'width': {'argc': 1},
     'key': {'argc': 2},
     'dateformat': {'argc': 1},
     'show': {
@@ -110,7 +111,6 @@ profile_parser_rules = {
 
 class Display:
     def __init__(self, stdscr, config):
-        self.width = 25
         self.s = stdscr
         self.config = config
         self.attrib_to_number = {'first': 1, 'sub': 2, 'subsub': 3}
@@ -150,28 +150,41 @@ class Display:
     def paint(self, stats):
         for x in range(self.mx):
             self.s.addch(1, x, curses.ACS_HLINE)
+        w = int(stats.profile['width'][0])
         for k in stats['first']:
-            s = k.ljust(12, ' ') + ' ' + \
-                str(stats['first'][k]['count']).rjust(7, ' ')
-            # s = k + ' ' + str(stats['first'][k]['count'])
-            #    v['count'].rjust(7, ' ')
-            self.putline(2, s, 'first')
-            if 'sub' in stats['first'][k]:
-            #    mark
-                for k in stats['first'][k]['sub']:
-                    s = k.ljust(12, ' ') + ' ' + \
-                            str(stats['first'][k]['count']).rjust(7, ' ')
+            indent = 2
+            width = w - indent
+            left = k
+            right = str(stats['first'][k]['count'])
+            spaces = width - (len(left) + len(right)) - 1
+            if spaces < 1:
+                raise Exception('Could not paint ' + left + ' ' + right + \
+                     'revise your width parameter')
+            s = left + (' ' * spaces) + right
+            self.putline(stats, indent, s, 'first')
+            ident = 4
+            width = w - indent
+            if not 'sub' in stats['first'][k]:
+                continue
+            for sk in stats['first'][k]['sub']:
+                left = sk
+                right = str(stats['first'][k][sk]['count'])
+#               right = str(stats['first'][k]['count'])
+                spaces = width - (len(left) + len(right)) - 1
+                s = left + (' ' * spaces) + right
+                self.putline(stats, ident, s, 'sub')
         for x in range(self.mx):
             self.s.addch(self.my - 2, x, curses.ACS_HLINE)
 
-    def putline(self, indent, string, attrib):
-        self.s.addstr(self.y, self.x, ' ' * self.width)
+    def putline(self, stats, indent, string, attrib):
+        w = int(stats.profile['width'][0])
+        self.s.addstr(self.y, self.x, ' ' * w)
         self.s.addch(self.y, self.x, curses.ACS_VLINE)
         a = curses.color_pair(self.attrib_to_number[attrib])
         self.s.addstr(self.y, self.x + indent, string, a)
         self.y += 1
         if self.y >= (self.my - 3):
-            self.x += self.width
+            self.x += w
             self.y = 2
 
 
@@ -185,14 +198,21 @@ class Stats:
         self.keyeval = self.profile['key'][1]
         # ['first', 'sub', 'subsub']
         self.first_op = self.profile['show']['first'][0]
-        self.firsteval = self.profile['show']['first'][1]
+        self.first_eval = self.profile['show']['first'][1]
         self.first_name = self.profile['show']['first'][2]
+        # XXX: This could be better unrolled ...
+        if 'sub' in self.profile['show']:
+            self.sub_op = self.profile['show']['sub'][0]
+            self.sub_eval = self.profile['show']['sub'][1]
+            self.sub_name = self.profile['show']['sub'][2]
+        else:
+            self.sub_op = None
 
     def process(self, line):
         ls = line.split(self.delimiter)
         try:
             key = eval(self.keyeval)
-            first_value = eval(self.firsteval)
+            first_value = eval(self.first_eval)
             date = eval(self.profile['dateformat'][0])
             self.data['date'] = date
             # Store start_date with the first line for the stats set
@@ -201,6 +221,7 @@ class Stats:
             if self.insert_update(self.data['keys'], self.data['first'],
                                     self.first_op, key, first_value):
                 self.data['count'] += 1
+
             if self.first_op == 'distinct':
                 distinct = len(self.data['keys'][key])
                 if distinct > int(self.first_name):
@@ -211,6 +232,7 @@ class Stats:
             # Check for the end of the set (increment from start_date is
             # met)
             # XXX
+
         except IndexError:
             return
         self.data['processed'] += 1
