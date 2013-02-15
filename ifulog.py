@@ -29,49 +29,76 @@ import datetime
 IFULOG_VERSION = "0.1.0"
 
 class CrazyParser:
-    ''' Crazy LR parser over the crazy lexer shlex '''
+    ''' Crazy LR parser over the crazy lexer shlex
+
+        The ruleset defines the 'grammar' of the languaje being
+        interpreted
+
+        The language is based in a simple keyword + arguments, and
+        newlines and spaces are not interpreted in any special way
+    '''
     def __init__(self, path, rules):
         s = open(path).read()
         tokens = shlex.split(s, comments=True)
-        self.tree = self.parse(tokens, rules, rules)
+        self.tree = self.__parse__(tokens, rules, rules)
 
-    def parse(self, toks, rules, prules, keyword=None):
+    def __parse__(self, toks, rules, prules, keyword=None):
         r = {}
         base = -1
         if 'argc' in rules:  # Terminal symbols to the right
-            if len(toks) != rules['argc']:
-                raise Exception('Wrong number of arguments -- ' +
-                    str(len(toks)) + ' -- for keyword \'' + str(keyword) +
-                    '\' expected ' + str(rules['argc']))
-            if 'type' in rules:
-                if not rules['type'] in prules['types']:
-                    raise Exception('Mentioned type ' + rules['type'] +
-                        ' non existant in rules')
-                try:
-                    type_enum = prules['types'][rules['type']]
-                except KeyError:
-                    raise Exception('Mentioned type ' + rules['type'] +
-                        ' non existant in rules')
-                ret = []
-                for token in toks:
-                    try:
-                        ret.append(type_enum[token])
-                    except KeyError:
-                        raise Exception('Unknown value ' + token +
-                        ' for type ' + rules['type'])
-                return ret
-            else:
-                return toks
+            return self.__parse_terminal__(toks, rules, prules, keyword)
         toks.append('last')
         for i in range(len(toks)):  # Delimite substrings by tokens and parse
             if toks[i] in rules or toks[i] == 'last':
                 if base == -1:
                     base = i
                     continue
-                r[toks[base]] = self.parse(toks[base + 1:i],
-                        rules[toks[base]], prules, toks[base])
+                bk = toks[base]
+                value = self.__parse__(toks[base + 1:i], rules[bk], prules, bk)
+                # Several occurrences only happen in non-terminal symbols
+                if 'ocurrences' in rules[bk]:
+                    if rules[bk]['ocurrences'] == '*':
+                        print 'bk ' + str(bk)
+                        if not bk in r:
+                            r[bk] = []
+                        r[bk].append(value)
+                else:
+                    r[bk] = value
                 base = i
         return r
+
+    def __parse_terminal__(self, toks, rules, prules, keyword):
+        ''' A terminal symbol is identied by having an 'argc'
+            attribute '''
+        if len(toks) != rules['argc']:
+            raise Exception('Wrong number of arguments -- ' +
+                str(len(toks)) + ' -- for keyword \'' + str(keyword) +
+                '\' expected ' + str(rules['argc']))
+        if 'type' in rules:
+            return self.__parse_type__(toks, rules, prules)
+        else:
+            return toks
+
+    def __parse_type__(self, toks, rules, prules):
+        ''' 'type' is a named enum in the root parse tree (prules). In case
+            of a type, substitute the symbolic enum value by it's definition
+            in the resulting array '''
+        if not rules['type'] in prules['types']:
+            raise Exception('Mentioned type ' + rules['type'] +
+                ' non existant in rules')
+        try:
+            type_enum = prules['types'][rules['type']]
+        except KeyError:
+            raise Exception('Mentioned type ' + rules['type'] +
+                ' non existant in rules')
+        ret = []
+        for token in toks:
+            try:
+                ret.append(type_enum[token])
+            except KeyError:
+                raise Exception('Unknown value ' + token +
+                ' for type ' + rules['type'])
+        return ret
 
     def __getitem__(self, item):
         return self.tree[item]
