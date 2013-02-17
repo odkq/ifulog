@@ -110,8 +110,7 @@ class CrazyParser:
 configuration_parser_rules = {
     'colors': {
         'first': {'argc': 2, 'type': 'color_enum'},
-        'sub': {'argc': 2, 'type': 'color_enum'},
-        'subsub': {'argc': 2, 'type': 'color_enum'}},
+        'sub': {'argc': 2, 'type': 'color_enum'}},
     'refresh': {
         'key': {'argc': 1},
         'display': {'argc': 1}},
@@ -132,15 +131,14 @@ profile_parser_rules = {
     'dateformat': {'argc': 1},
     'show': {
         'first': {'argc': 3},
-        'sub': {'argc': 3},
-        'subsub': {'argc': 3}}}
+        'sub': {'argc': 3}}}
 
 
 class Display:
     def __init__(self, stdscr, config):
         self.s = stdscr
         self.config = config
-        self.attrib_to_number = {'first': 1, 'sub': 2, 'subsub': 3}
+        self.attrib_to_number = {'first': 1, 'sub': 2}
         self.attrib_title = curses.A_STANDOUT
         if curses.has_colors():
             for name in self.attrib_to_number:
@@ -180,35 +178,33 @@ class Display:
         w = int(stats.profile['width'][0])
         for k in stats['first']:
             indent = 2
-            width = w - indent
             left = k
             right = str(stats['first'][k]['count'])
-            spaces = width - (len(left) + len(right)) - 1
+            spaces = w - (len(left) + len(right)) - indent - 1
             if spaces < 1:
                 raise Exception('Could not paint ' + left + ' ' + right + \
                      'revise your width parameter')
-            s = left + (' ' * spaces) + right
-            self.putline(stats, indent, s, 'first')
+            s = (' ' * indent) + left + (' ' * spaces) + right
+            self.putline(stats, s, 'first')
             ident = 4
-            width = w - indent
             if not 'sub' in stats['first'][k]:
                 continue
             for sk in stats['first'][k]['sub']:
                 left = sk
-                right = str(stats['first'][k][sk]['count'])
+                right = str(stats['first'][k]['sub'][sk]['count'])
 #               right = str(stats['first'][k]['count'])
-                spaces = width - (len(left) + len(right)) - 1
-                s = left + (' ' * spaces) + right
-                self.putline(stats, ident, s, 'sub')
+                spaces = w - (len(left) + len(right)) - indent - 1 
+                s = (' ' * indent) + left + (' ' * spaces) + right
+                self.putline(stats, s, 'sub')
         for x in range(self.mx):
             self.s.addch(self.my - 2, x, curses.ACS_HLINE)
 
-    def putline(self, stats, indent, string, attrib):
+    def putline(self, stats, string, attrib):
         w = int(stats.profile['width'][0])
         self.s.addstr(self.y, self.x, ' ' * w)
         self.s.addch(self.y, self.x, curses.ACS_VLINE)
         a = curses.color_pair(self.attrib_to_number[attrib])
-        self.s.addstr(self.y, self.x + indent, string, a)
+        self.s.addstr(self.y, self.x+1, string, a)
         self.y += 1
         if self.y >= (self.my - 3):
             self.x += w
@@ -240,13 +236,17 @@ class Stats:
         try:
             key = eval(self.keyeval)
             first_value = eval(self.first_eval)
+            if self.sub_op:
+                sub_value = eval(self.sub_eval)
+            else:
+                sub_value = None
             date = eval(self.profile['dateformat'][0])
             self.data['date'] = date
             # Store start_date with the first line for the stats set
             if self.data['count'] == '0':
                 self.startdate = date
             if self.insert_update(self.data['keys'], self.data['first'],
-                                    self.first_op, key, first_value):
+                                    self.first_op, key, first_value, sub_value):
                 self.data['count'] += 1
 
             if self.first_op == 'distinct':
@@ -269,7 +269,7 @@ class Stats:
         # Only used in group aggregation, to either store
         # a new first or update it's count
         if not first_value in r:
-            r[first_value] = {'count': 1}
+            r[first_value] = {'count': 1, 'sub': {}}
         else:
             r[first_value]['count'] += 1
 
@@ -282,6 +282,26 @@ class Stats:
         if r[old_first]['count'] == 0:
             del r[old_first]
 
+    def add_sub(self, r, first_value, sub_value):
+        if not first_value in r:
+            raise Exception('asked to add a sub for a value that is not there')
+        if not sub_value in r[first_value]['sub']:
+            r[first_value]['sub'][sub_value] = {'count': 1}
+        else:
+            r[first_value]['sub'][sub_value]['count'] += 1
+        self.add_result(r, first_value)
+
+    def del_sub(self, r, old_first, old_sub):
+        if not old_first in r:
+            raise Exception('asked to del a sub that was not there')
+        if not old_sub in r[old_first]['sub']:
+            raise Exception('asked to del a sub that was not there')
+        r[old_first]['sub'][old_sub]['count'] -= 1
+        if r[old_first]['sub'][old_sub]['count'] == 0:
+            del r[old_first]['sub'][old_sub]
+        self.del_result(r, old_first)
+
+
     def update_result(self, r, value, distinct):
         # update a distinct count using the absolute computed value
         if not value in r:
@@ -289,20 +309,28 @@ class Stats:
         else:
             r[value]['count'] = distinct
 
-    def insert_update(self, d, r, op, key, first_value):
+    def insert_update(self, d, r, op, key, first_value, sub_value):
         new = False
         if not key in d:
             if op == 'group':
-                d[key] = {'first': first_value}
+                d[key] = {'first': first_value, 'sub': sub_value}
                 self.add_result(r, first_value)
+                self.add_sub(r, first_value, sub_value)
             elif op == 'distinct':
                 d[key] = {'first': {first_value: 1}}
             new = True
         if op == 'group':
             if d[key]['first'] != first_value:
                 self.add_result(r, first_value)
+                if sub_value:
+                    self.add_sub(r, first_value, sub_value)
+                    self.del_sub(r, d[key]['first'], d[key]['sub'])
                 self.del_result(r, d[key]['first'])
                 d[key]['first'] = first_value
+            elif sub_value and d[key]['sub'] != sub_value:
+                    # XXX: Log here suspicious sub changes
+                    self_del_sub(r, d[key]['first'], d[key]['sub'])
+                    self.add_sub(r, first_value, sub-value)
         elif op == 'distinct':
             if not first_value in d[key]:
                 d[key][first_value] = 1
